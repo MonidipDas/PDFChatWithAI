@@ -25,7 +25,7 @@ def ensure_event_loop() -> None:
 def main() -> None:
     ensure_event_loop()
     st.set_page_config(page_title="PDF Chat with Groq", layout="wide")
-    st.title("📚 Chat with your PDF using Groq")
+    st.title("📚 Ask Queries from your pdf")
 
     try:
         configure_api_key()
