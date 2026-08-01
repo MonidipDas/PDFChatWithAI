@@ -1,7 +1,5 @@
 import requests
 
-from langchain.prompts import PromptTemplate
-
 from .config import get_base_url, get_api_key
 
 PROMPT_TEMPLATE = """
@@ -15,11 +13,6 @@ Question: {question}
 
 Answer:"""
 
-prompt = PromptTemplate(
-    template=PROMPT_TEMPLATE,
-    input_variables=["context", "question"],
-)
-
 
 def format_context(docs):
     return "\n\n".join(getattr(doc, "page_content", str(doc)) for doc in docs)
@@ -27,7 +20,7 @@ def format_context(docs):
 
 def get_answer(question: str, vector_store) -> str:
     docs = vector_store.similarity_search(question)
-    prompt_text = prompt.format(context=format_context(docs), question=question)
+    prompt_text = PROMPT_TEMPLATE.format(context=format_context(docs), question=question)
 
     base = get_base_url().rstrip('/')
     url = f"{base}/chat/completions"
