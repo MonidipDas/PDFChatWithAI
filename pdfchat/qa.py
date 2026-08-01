@@ -1,6 +1,4 @@
-import requests
-
-from .config import get_base_url, get_api_key
+from .config import make_api_request
 
 PROMPT_TEMPLATE = """
 You are a helpful assistant. Use the following context to answer the user's question.
@@ -22,10 +20,7 @@ def get_answer(question: str, vector_store) -> str:
     docs = vector_store.similarity_search(question)
     prompt_text = PROMPT_TEMPLATE.format(context=format_context(docs), question=question)
 
-    base = get_base_url().rstrip('/')
-    url = f"{base}/chat/completions"
     headers = {
-        "Authorization": f"Bearer {get_api_key()}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -38,14 +33,13 @@ def get_answer(question: str, vector_store) -> str:
     }
 
     try:
-        response = requests.post(
-            url,
+        response = make_api_request(
+            "POST",
+            "/chat/completions",
             headers=headers,
             json=payload,
             timeout=60,
         )
-
-        response.raise_for_status()
         data = response.json()
 
         # Standard Chat Completions-style response handling
@@ -59,11 +53,8 @@ def get_answer(question: str, vector_store) -> str:
         # If the response format doesn't match, return raw JSON as fallback
         return str(data)
 
-    except requests.HTTPError as http_err:
-        # Likely a 404 or other API-level error — fall back to returning extracted
-        # context from the retrieved documents so the app still responds.
-        ctx = format_context(docs[:3])
-        return f"(Groq API error: {http_err}). Returning extracted context instead:\n\n{ctx}"
-    except Exception:
-        # Re-raise unexpected exceptions so they can be handled/logged upstream
+    except Exception as exc:
+        if isinstance(exc, Exception):
+            ctx = format_context(docs[:3])
+            return f"(Groq API error: {exc}). Returning extracted context instead:\n\n{ctx}"
         raise
