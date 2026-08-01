@@ -23,3 +23,5 @@ A small Streamlit project to upload a PDF, create embeddings with Groq, and answ
    ```bash
    streamlit run app.py
    ```
+## GroqAPI
+Go to https://console.groq.com/keys and create API_KEY. Create .env at root to run the project.
