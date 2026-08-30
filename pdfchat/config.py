@@ -50,7 +50,8 @@ class _RateLimiter:
         self.period = period
         self.lock = Lock()
         self.calls = []
-
+        #maximum capacity requests each period
+        
     def acquire(self) -> None:
         while True:
             with self.lock:
