@@ -2,8 +2,11 @@ streamlit
 python-dotenv
 langchain-community
 langchain-text-splitters
-langchain-text-splitters
 PyPDF2
 faiss-cpu
 sentence-transformers
 requests
+rank_bm25
+langchain-huggingface
+plotly
+pandas

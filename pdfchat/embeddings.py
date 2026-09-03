@@ -5,9 +5,13 @@
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever, ContextualCompressionRetriever
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+from langchain.retrievers.document_compressors import CrossEncoderReranker
 
 
-def create_vector_store(text: str) -> FAISS:
+def create_vector_store(text: str):
     if not text:
         raise ValueError("No text available to embed.")
     
@@ -19,4 +23,23 @@ def create_vector_store(text: str) -> FAISS:
     # Every chunk is embedded into a vector representation using the HuggingFaceEmbeddings model.
     # Vectors are stored in FAISS Vector Store for efficient similarity search.
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.from_texts(chunks, embedding=embeddings)
+    vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+    faiss_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+
+    # BM25 Retriever for sparse hybrid search
+    bm25_retriever = BM25Retriever.from_texts(chunks)
+    bm25_retriever.k = 5
+
+    # Ensemble Retriever combining dense and sparse search
+    ensemble_retriever = EnsembleRetriever(
+        retrievers=[bm25_retriever, faiss_retriever], weights=[0.5, 0.5]
+    )
+
+    # Cross Encoder Reranker to improve search results relevance
+    model = HuggingFaceCrossEncoder(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    compressor = CrossEncoderReranker(model=model, top_n=3)
+    compression_retriever = ContextualCompressionRetriever(
+        base_compressor=compressor, base_retriever=ensemble_retriever
+    )
+
+    return compression_retriever

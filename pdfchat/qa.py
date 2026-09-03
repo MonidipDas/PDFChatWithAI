@@ -5,6 +5,10 @@ from .config import make_api_request
 PROMPT_TEMPLATE = """
 You are a helpful assistant. Use the following context to answer the user's question.
 Only use information from the context and respond clearly.
+If previous conversation history is provided, you may use it for context but prioritize the PDF context.
+
+Previous Conversation:
+{history}
 
 Context:
 {context}
@@ -39,9 +43,12 @@ def _get_error_status_code(exc):
     return getattr(response, "status_code", None)
 
 
-def get_answer(question: str, vector_store) -> str:
-    docs = vector_store.similarity_search(question)
-    prompt_text = PROMPT_TEMPLATE.format(context=format_context(docs), question=question)
+from pdfchat.memory import get_conversation_context, add_interaction
+
+def get_answer(question: str, retriever) -> str:
+    docs = retriever.invoke(question)
+    history = get_conversation_context()
+    prompt_text = PROMPT_TEMPLATE.format(history=history, context=format_context(docs), question=question)
 
     headers = {
         "Content-Type": "application/json",
@@ -73,8 +80,11 @@ def get_answer(question: str, vector_store) -> str:
                 message = choices[0].get("message", {})
                 content = message.get("content")
                 if isinstance(content, str):
-                    return content.strip()
+                    ans = content.strip()
+                    add_interaction(question, ans)
+                    return ans
 
+            add_interaction(question, str(data))
             return str(data)
         except Exception as exc:
             last_error = exc
@@ -83,6 +93,9 @@ def get_answer(question: str, vector_store) -> str:
 
     ctx = format_context(docs[:3])
     if last_error is not None:
-        return f"(Groq API error: {last_error}). Returning extracted context instead:\n\n{ctx}"
+        ans = f"(Groq API error: {last_error}). Returning extracted context instead:\n\n{ctx}"
+        add_interaction(question, ans)
+        return ans
 
+    add_interaction(question, ctx)
     return ctx
