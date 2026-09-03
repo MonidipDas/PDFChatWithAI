@@ -33,4 +33,4 @@ def test_get_answer_retries_with_fallback_model(monkeypatch):
     answer = get_answer("When are invoices due?", DummyVectorStore())
 
     assert answer == "Invoices are due in 30 days."
-    assert calls == ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+    assert calls == ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
