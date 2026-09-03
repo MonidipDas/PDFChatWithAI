@@ -1,6 +1,7 @@
 streamlit
 python-dotenv
 langchain-community
+langchain
 langchain-text-splitters
 PyPDF2
 faiss-cpu
