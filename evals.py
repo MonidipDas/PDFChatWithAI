@@ -409,6 +409,42 @@ def evaluate_single_question(
     }
 
 
+def evaluate_live_query(
+    question: str,
+    answer: str,
+    context: str,
+    latency_seconds: float,
+) -> Dict[str, Any]:
+    """Evaluate a real user query using the LLM judge.
+
+    Unlike evaluate_single_question(), this does NOT need expected_facts
+    or a predefined test dict.  It is designed for live monitoring of
+    actual user interactions.
+
+    Args:
+        question: The user's question.
+        answer: The generated answer.
+        context: The retrieved context used to generate the answer.
+        latency_seconds: Time taken for retrieval + generation.
+
+    Returns:
+        A result dict with llm_judge scores and metadata.
+    """
+    judge_result = llm_judge(question, context, answer)
+
+    return {
+        "question": question,
+        "category": "user_query",
+        "expected_facts": [],
+        "answer": answer,
+        "context_snippet": context[:300],
+        "latency_seconds": latency_seconds,
+        "keyword_check": {"score": 0, "matched": [], "missed": [], "is_unanswerable": False},
+        "llm_judge": judge_result,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def run_evaluation(
     questions: List[Dict[str, Any]] | None = None,
     document_text: str | None = None,
