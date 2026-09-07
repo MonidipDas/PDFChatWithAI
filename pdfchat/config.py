@@ -15,17 +15,25 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_FACTOR = 1.0
 
 
+def _safe_st_secret(key):
+    """Read a Streamlit secret, returning None if unavailable."""
+    try:
+        return st.secrets.get(key)
+    except Exception:
+        return None
+
+
 def get_api_key():
     return (
         os.getenv("GROQ_API_KEY")
-        or st.secrets.get("GROQ_API_KEY")
+        or _safe_st_secret("GROQ_API_KEY")
     )
 
 
 def get_base_url():
     return (
         os.getenv("GROQ_API_BASE_URL")
-        or st.secrets.get("GROQ_API_BASE_URL")
+        or _safe_st_secret("GROQ_API_BASE_URL")
         or "https://api.groq.com/openai/v1"
     )
 

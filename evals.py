@@ -239,7 +239,7 @@ def llm_judge(question: str, context: str, answer: str) -> Dict[str, Any]:
         return result
 
     except Exception as exc:
-        print(f"  ⚠ LLM judge error: {exc}")
+        print(f"  [WARN] LLM judge error: {exc}")
         return default_result
 
 
@@ -308,15 +308,15 @@ def print_question_result(idx: int, result: Dict[str, Any]) -> None:
     # Keyword check
     kw = result["keyword_check"]
     if kw.get("is_unanswerable"):
-        status = "✅ Hedging detected" if kw.get("hedging_detected") else "❌ No hedging (possible hallucination)"
-        print(f"  Keywords: N/A (unanswerable) → {status}")
+        status = "[PASS] Hedging detected" if kw.get("hedging_detected") else "[FAIL] No hedging (possible hallucination)"
+        print(f"  Keywords: N/A (unanswerable) -> {status}")
     else:
         print(f"  Keywords: {kw['score']:.0%}  matched={kw['matched']}  missed={kw['missed']}")
 
     # LLM judge
     judge = result["llm_judge"]
     if judge.get("reasoning") == "LLM judge call failed":
-        print("  LLM Judge: ⚠ Failed (using keyword score only)")
+        print("  LLM Judge: [WARN] Failed (using keyword score only)")
     else:
         scores_str = "  ".join(f"{k[:6]}={judge[k]}/5" for k in METRIC_KEYS)
         print(f"  LLM Judge: {scores_str}")
@@ -362,29 +362,103 @@ def save_results(results: List[Dict[str, Any]], agg: Dict[str, Any], filepath: s
     }
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
-    print(f"  💾 Results saved to {filepath}")
+    print(f"  [SAVED] Results saved to {filepath}")
 
 
 # ---------------------------------------------------------------------------
-# Main evaluation runner
+# Core evaluation function (importable by Streamlit dashboard)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_single_question(
+    test: Dict[str, Any],
+    retriever,
+) -> Dict[str, Any]:
+    """Evaluate a single test question and return the result dict.
+
+    This is the atomic evaluation unit, usable from both CLI and Streamlit.
+    """
+    question = test["question"]
+    expected_facts = test["expected_facts"]
+    category = test["category"]
+
+    # --- Retrieve + Answer (measure latency) ---
+    start_time = time.perf_counter()
+
+    docs = retriever.invoke(question)
+    context = "\n\n".join(d.page_content for d in docs)
+    answer = get_answer(question, retriever)
+
+    latency = round(time.perf_counter() - start_time, 2)
+
+    # --- Keyword fact check (deterministic) ---
+    kw_result = keyword_fact_check(answer, expected_facts)
+
+    # --- LLM-as-Judge (5 scored metrics) ---
+    judge_result = llm_judge(question, context, answer)
+
+    return {
+        "question": question,
+        "category": category,
+        "expected_facts": expected_facts,
+        "answer": answer,
+        "context_snippet": context[:300],
+        "latency_seconds": latency,
+        "keyword_check": kw_result,
+        "llm_judge": judge_result,
+    }
+
+
+def run_evaluation(
+    questions: List[Dict[str, Any]] | None = None,
+    document_text: str | None = None,
+) -> tuple:
+    """Run the full evaluation pipeline and return (results, aggregate).
+
+    Args:
+        questions: List of test question dicts. Defaults to TEST_QUESTIONS.
+        document_text: Source text for the retriever. Defaults to SAMPLE_DOCUMENT_TEXT.
+
+    Returns:
+        Tuple of (per_question_results, aggregate_summary).
+    """
+    questions = questions or TEST_QUESTIONS
+    document_text = document_text or SAMPLE_DOCUMENT_TEXT
+
+    configure_api_key()
+    validate_api_key()
+
+    retriever = create_vector_store(document_text)
+
+    results: List[Dict[str, Any]] = []
+    for test in questions:
+        result = evaluate_single_question(test, retriever)
+        results.append(result)
+
+    agg = aggregate_results(results)
+    return results, agg
+
+
+# ---------------------------------------------------------------------------
+# CLI runner (console output + JSON save)
 # ---------------------------------------------------------------------------
 
 
 def run_evals() -> None:
-    """Run the full evaluation pipeline."""
+    """Run the full evaluation pipeline with formatted console output."""
 
-    print_header("PDFChatWithAI — LLM Evaluation Framework")
+    print_header("PDFChatWithAI -- LLM Evaluation Framework")
 
     # 1. Configure API
-    print("\n  🔑 Configuring API key...")
+    print("\n  [*] Configuring API key...")
     configure_api_key()
     validate_api_key()
-    print("  ✅ API key validated")
+    print("  [OK] API key validated")
 
     # 2. Build retriever from sample document
-    print("\n  📄 Building hybrid retriever + cross-encoder reranker...")
+    print("\n  [*] Building hybrid retriever + cross-encoder reranker...")
     retriever = create_vector_store(SAMPLE_DOCUMENT_TEXT)
-    print("  ✅ Retriever ready")
+    print("  [OK] Retriever ready")
 
     # 3. Evaluate each question
     results: List[Dict[str, Any]] = []
@@ -392,39 +466,8 @@ def run_evals() -> None:
     print_header(f"EVALUATING {len(TEST_QUESTIONS)} QUESTIONS")
 
     for idx, test in enumerate(TEST_QUESTIONS):
-        question = test["question"]
-        expected_facts = test["expected_facts"]
-        category = test["category"]
-
-        # --- Retrieve + Answer (measure latency) ---
-        start_time = time.perf_counter()
-
-        docs = retriever.invoke(question)
-        context = "\n\n".join(d.page_content for d in docs)
-        answer = get_answer(question, retriever)
-
-        latency = round(time.perf_counter() - start_time, 2)
-
-        # --- Keyword fact check (deterministic) ---
-        kw_result = keyword_fact_check(answer, expected_facts)
-
-        # --- LLM-as-Judge (5 scored metrics) ---
-        judge_result = llm_judge(question, context, answer)
-
-        # --- Assemble result ---
-        result = {
-            "question": question,
-            "category": category,
-            "expected_facts": expected_facts,
-            "answer": answer,
-            "context_snippet": context[:300],
-            "latency_seconds": latency,
-            "keyword_check": kw_result,
-            "llm_judge": judge_result,
-        }
+        result = evaluate_single_question(test, retriever)
         results.append(result)
-
-        # Print per-question result
         print_question_result(idx, result)
 
     # 4. Aggregate
@@ -436,8 +479,9 @@ def run_evals() -> None:
     # 6. Save to JSON
     save_results(results, agg)
 
-    print("  ✅ Evaluation complete!\n")
+    print("  [OK] Evaluation complete!\n")
 
 
 if __name__ == "__main__":
     run_evals()
+
