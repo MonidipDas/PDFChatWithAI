@@ -67,6 +67,53 @@ flowchart TD
 5. **Cross-Encoder Reranking** — The fused results are rescored by `cross-encoder/ms-marco-MiniLM-L-6-v2` and the top 3 are kept
 6. **LLM Generation** — The reranked context + conversation memory are passed to Groq for answer generation
 
+### 🛡️ Guardrails Pipeline
+
+The application implements a robust two-layer guardrail system to ensure safe and grounded interactions.
+
+```mermaid
+flowchart TD
+    UserQ["User Question"] --> InputGR{"Input Guardrails"}
+    InputGR -- Pass --> RAG["RAG Pipeline"]
+    InputGR -- Fail (Injection) --> BlockIn["Fallback Message"]
+    
+    RAG --> Answer["LLM Output"]
+    Answer --> OutputGR{"Output Guardrails"}
+    OutputGR -- Pass --> Final["Return to User"]
+    OutputGR -- Fail (Hallucination/Toxic) --> BlockOut["Fallback Message"]
+
+    style BlockIn fill:#f00,color:#fff
+    style BlockOut fill:#f00,color:#fff
+    style Final fill:#0a0,color:#fff
+```
+- **Input Guardrails**: Detects prompt injection, system prompt extraction, and malicious instructions using heuristic rules and a fast LLM classifier.
+- **Output Guardrails**: 
+  - **Hallucination Detection**: Verifies that the LLM's answer is faithful to the provided document context.
+  - **Unsafe Content**: Blocks toxic language, PII leaks, and harmful generation.
+
+### 🔄 Rate Limiting & Fallback
+
+Designed for reliability in production, all Groq API calls go through a resilient execution flow.
+
+```mermaid
+flowchart TD
+    Req["API Request"] --> CheckLimit{"Local Rate Limiter"}
+    CheckLimit -- Allowed --> API["Groq API (Primary Key)"]
+    CheckLimit -- Limited --> Wait["Wait Period"]
+    Wait --> CheckLimit
+    
+    API -- Success --> Ret["Return Response"]
+    API -- 429 (Rate Limit) --> Backoff["Exponential Backoff<br/>+ Jitter"]
+    Backoff --> API
+    API -- Auth Error / Retries Exhausted --> Fallback["Groq API (Fallback Key)"]
+    Fallback --> Ret
+
+    style Ret fill:#0a0,color:#fff
+```
+- **Local Rate Limiting**: Controls the outbound request rate to prevent hitting server limits.
+- **Exponential Backoff + Jitter**: Gracefully handles `429 Too Many Requests` errors without causing thundering herd problems.
+- **Key Rotation**: Automatically switches to `GROQ_FALLBACK_API_KEY` if the primary key is exhausted or encounters authentication errors.
+
 ---
 
 ## 🛠️ Tech Stack
