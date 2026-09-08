@@ -1,6 +1,16 @@
+import logging
 import os
 
 from .config import make_api_request
+from .guardrails import (
+    check_input_guardrails,
+    check_output_guardrails,
+    FALLBACK_INJECTION,
+    FALLBACK_HALLUCINATION,
+    FALLBACK_UNSAFE,
+)
+
+logger = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = """
 You are a helpful assistant. Use the following context to answer the user's question.
@@ -45,16 +55,61 @@ def _get_error_status_code(exc):
 
 from pdfchat.memory import get_conversation_context, add_interaction
 
-def get_answer(question: str, retriever) -> str:
+def get_answer(question: str, retriever, *, _skip_guardrails: bool = False) -> str:
+    """Get an answer for *question* using the retriever.
+
+    Runs input and output guardrails unless *_skip_guardrails* is ``True``.
+    Returns just the answer string for backward compatibility.
+    Use :func:`get_answer_with_guardrails` to also receive guardrail details.
+    """
+    answer, _results = get_answer_with_guardrails(
+        question, retriever, _skip_guardrails=_skip_guardrails,
+    )
+    return answer
+
+
+def get_answer_with_guardrails(
+    question: str,
+    retriever,
+    *,
+    _skip_guardrails: bool = False,
+) -> tuple:
+    """Get an answer for *question* and return ``(answer, guardrail_results)``.
+
+    *guardrail_results* is a dict with keys ``"input"`` and ``"output"``,
+    each containing a list of :class:`GuardrailResult` objects.
+    """
+    from .guardrails import GuardrailResult  # avoid circular at module level
+
+    guardrail_results: dict = {"input": [], "output": []}
+
+    # ── Input guardrails ─────────────────────────────────────────────
+    if not _skip_guardrails:
+        input_results = check_input_guardrails(question)
+        guardrail_results["input"] = input_results
+
+        for gr in input_results:
+            if not gr.passed:
+                logger.warning(
+                    "Input guardrail BLOCKED [%s]: %s", gr.category, gr.details,
+                )
+                add_interaction(question, FALLBACK_INJECTION)
+                return FALLBACK_INJECTION, guardrail_results
+
+    # ── Retrieve context & build prompt ──────────────────────────────
     docs = retriever.invoke(question)
+    context = format_context(docs)
     history = get_conversation_context()
-    prompt_text = PROMPT_TEMPLATE.format(history=history, context=format_context(docs), question=question)
+    prompt_text = PROMPT_TEMPLATE.format(
+        history=history, context=context, question=question,
+    )
 
-    headers = {
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
 
+    # ── Call LLM ─────────────────────────────────────────────────────
     last_error = None
+    answer = None
+
     for model_name in get_model_candidates():
         payload = {
             "model": model_name,
@@ -80,22 +135,44 @@ def get_answer(question: str, retriever) -> str:
                 message = choices[0].get("message", {})
                 content = message.get("content")
                 if isinstance(content, str):
-                    ans = content.strip()
-                    add_interaction(question, ans)
-                    return ans
+                    answer = content.strip()
+                    break
 
-            add_interaction(question, str(data))
-            return str(data)
+            answer = str(data)
+            break
         except Exception as exc:
             last_error = exc
             if _get_error_status_code(exc) not in (404,):
                 break
 
-    ctx = format_context(docs[:3])
-    if last_error is not None:
-        ans = f"(Groq API error: {last_error}). Returning extracted context instead:\n\n{ctx}"
-        add_interaction(question, ans)
-        return ans
+    # Fallback when LLM call fails
+    if answer is None:
+        ctx = format_context(docs[:3])
+        if last_error is not None:
+            answer = f"(Groq API error: {last_error}). Returning extracted context instead:\n\n{ctx}"
+        else:
+            answer = ctx
 
-    add_interaction(question, ctx)
-    return ctx
+    # ── Output guardrails ────────────────────────────────────────────
+    if not _skip_guardrails:
+        output_results = check_output_guardrails(answer, context, question)
+        guardrail_results["output"] = output_results
+
+        for gr in output_results:
+            if not gr.passed:
+                logger.warning(
+                    "Output guardrail BLOCKED [%s]: %s", gr.category, gr.details,
+                )
+                if gr.category == "hallucination":
+                    fallback = FALLBACK_HALLUCINATION
+                elif gr.category == "unsafe_output":
+                    fallback = FALLBACK_UNSAFE
+                else:
+                    fallback = FALLBACK_UNSAFE
+
+                add_interaction(question, fallback)
+                return fallback, guardrail_results
+
+    add_interaction(question, answer)
+    return answer, guardrail_results
+

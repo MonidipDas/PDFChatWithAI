@@ -6,8 +6,11 @@ from pdfchat.qa import get_answer
 
 
 class DummyVectorStore:
-    def similarity_search(self, question):
+    def invoke(self, question):
         return [SimpleNamespace(page_content="The contract says invoices are due in 30 days.")]
+
+    def similarity_search(self, question):
+        return self.invoke(question)
 
 
 def test_get_answer_retries_with_fallback_model(monkeypatch):
@@ -30,7 +33,8 @@ def test_get_answer_retries_with_fallback_model(monkeypatch):
 
     monkeypatch.setattr("pdfchat.qa.make_api_request", fake_make_api_request)
 
-    answer = get_answer("When are invoices due?", DummyVectorStore())
+    answer = get_answer("When are invoices due?", DummyVectorStore(), _skip_guardrails=True)
 
     assert answer == "Invoices are due in 30 days."
     assert calls == ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+

@@ -11,7 +11,7 @@ import streamlit as st
 from pdfchat.config import configure_api_key, validate_api_key
 from pdfchat.embeddings import create_vector_store
 from pdfchat.pdf_processing import extract_text_from_pdf
-from pdfchat.qa import get_answer
+from pdfchat.qa import get_answer, get_answer_with_guardrails
 from pdfchat.memory import load_memory, clear_memory
 from evals import (
     TEST_QUESTIONS,
@@ -100,38 +100,67 @@ def tab_chat(retriever):
 
     question = st.text_input("Ask a question about the PDF:", key="chat_input")
     if question:
-        # --- Retrieve + Answer (measure latency) ---
+        # --- Retrieve + Answer with guardrails (measure latency) ---
         start_time = time.perf_counter()
 
         docs = retriever.invoke(question)
         context = format_context(docs)
-        answer = get_answer(question, retriever)
+        answer, guardrail_results = get_answer_with_guardrails(question, retriever)
 
         latency = round(time.perf_counter() - start_time, 2)
 
         st.markdown(f"**You:** {question}")
-        st.info(f"**AI:** {answer}")
-        st.caption(f"Response time: {latency:.2f}s")
 
-        # --- Run LLM-judge evaluation in the background ---
-        with st.spinner("Evaluating answer quality..."):
-            eval_result = evaluate_live_query(question, answer, context, latency)
+        # --- Display guardrail status ---
+        input_results = guardrail_results.get("input", [])
+        output_results = guardrail_results.get("output", [])
 
-        # Store in session state
-        st.session_state["live_evals"].append(eval_result)
+        input_blocked = any(not gr.passed for gr in input_results)
+        output_blocked = any(not gr.passed for gr in output_results)
 
-        # Show inline quality indicator
-        judge = eval_result["llm_judge"]
-        if judge.get("reasoning") and judge["reasoning"] != "LLM judge call failed":
-            avg_score = sum(judge.get(k, 0) for k in METRIC_KEYS) / len(METRIC_KEYS)
-            if avg_score >= 4:
-                st.success(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
-            elif avg_score >= 3:
-                st.warning(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
-            else:
-                st.error(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
+        if input_blocked:
+            # Input was rejected — show block indicator
+            st.error(f"🚫 **Input Blocked:** {answer}")
+            blocked_gr = next(gr for gr in input_results if not gr.passed)
+            with st.expander("Guardrail Details", expanded=False):
+                st.markdown(f"**Category:** `{blocked_gr.category}`")
+                st.markdown(f"**Reason:** {blocked_gr.message}")
+                st.caption(f"Details: {blocked_gr.details}")
+        elif output_blocked:
+            # Output was modified by guardrails
+            st.warning(f"⚠️ **AI (Modified):** {answer}")
+            blocked_gr = next(gr for gr in output_results if not gr.passed)
+            with st.expander("Guardrail Details", expanded=False):
+                st.markdown(f"**Category:** `{blocked_gr.category}`")
+                st.markdown(f"**Reason:** {blocked_gr.message}")
+                st.caption(f"Details: {blocked_gr.details}")
         else:
-            st.warning("Could not evaluate answer quality.")
+            # All guardrails passed
+            st.info(f"**AI:** {answer}")
+            st.caption(f"🛡️ All guardrails passed  •  Response time: {latency:.2f}s")
+
+        if not input_blocked:
+            st.caption(f"Response time: {latency:.2f}s")
+
+            # --- Run LLM-judge evaluation in the background ---
+            with st.spinner("Evaluating answer quality..."):
+                eval_result = evaluate_live_query(question, answer, context, latency)
+
+            # Store in session state
+            st.session_state["live_evals"].append(eval_result)
+
+            # Show inline quality indicator
+            judge = eval_result["llm_judge"]
+            if judge.get("reasoning") and judge["reasoning"] != "LLM judge call failed":
+                avg_score = sum(judge.get(k, 0) for k in METRIC_KEYS) / len(METRIC_KEYS)
+                if avg_score >= 4:
+                    st.success(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
+                elif avg_score >= 3:
+                    st.warning(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
+                else:
+                    st.error(f"Quality Score: {avg_score:.1f}/5  --  {judge.get('reasoning', '')}")
+            else:
+                st.warning("Could not evaluate answer quality.")
 
 
 def tab_memory():
