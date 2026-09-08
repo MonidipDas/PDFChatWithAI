@@ -261,7 +261,7 @@ This project is open source and available under the [MIT License](LICENSE).
 
 <div align="center">
 
-**Built with ❤️ by [Monidip Das](https://github.com/MonidipDas)**
+**Built by [Monidip Das](https://github.com/MonidipDas)**
 
 ⭐ Star this repo if you found it useful!
 
