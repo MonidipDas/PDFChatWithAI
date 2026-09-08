@@ -30,15 +30,15 @@
 | 🧠 **Agentic Memory** | Persists conversation history so the AI retains context across questions |
 | ⚡ **Groq LPU Inference** | Ultra-low latency answers via Groq's hardware-accelerated API |
 | 📊 **Accuracy Dashboard** | Visual comparison of retrieval strategies (Dense vs Sparse vs Hybrid vs Reranked) |
-| 🛡️ **Model Fallback** | Automatic failover across multiple Groq-hosted models |
-| 🔄 **Rate Limiting & Retries** | Built-in rate limiter with exponential backoff for production reliability |
+| 🛡️ **Model Fallback** | Automatic failover across multiple Groq-hosted models and fallback API keys (`GROQ_FALLBACK_API_KEY`) |
+| 🔄 **Rate Limiting & Retries** | Built-in rate limiter with exponential backoff and jitter for production reliability |
 
 ---
 
 ## 🏗️ Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["📄 PDF Upload"] --> B["📝 Text Extraction<br/>(PyPDF2)"]
     B --> C["✂️ Chunking<br/>(1000 chars, 200 overlap)"]
     C --> D["🔢 Embedding<br/>(all-MiniLM-L6-v2)"]
@@ -140,6 +140,7 @@ Create a `.env` file in the project root:
 ```env
 # Required
 GROQ_API_KEY=gsk_your_api_key_here
+GROQ_FALLBACK_API_KEY=gsk_your_fallback_api_key_here
 
 # Optional — override defaults
 GROQ_MODEL=openai/gpt-oss-20b          # Comma-separated list for fallback
